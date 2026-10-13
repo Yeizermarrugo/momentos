@@ -5,7 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { posts, photos, reactions } from "@/db/schema";
 import { requireGuest } from "@/lib/session";
-import { createUploadUrl, deleteObject, type UploadCategory } from "@/lib/media-storage";
+import { createUploadUrl, deleteObject, isOwnUploadKey, publicUrlForKey, type UploadCategory } from "@/lib/media-storage";
 import { MAX_CAPTION_LENGTH } from "@/lib/format";
 
 const MAX_PHOTOS_PER_POST = 10;
@@ -27,12 +27,15 @@ export async function requestUploadUrls(category: UploadCategory, count: number)
 
 export async function createPost(
   category: UploadCategory,
-  uploaded: { key: string; publicUrl: string }[],
+  keys: string[],
   caption?: string
 ) {
   const guest = await requireGuest();
-  if (uploaded.length === 0) throw new Error("No hay fotos para publicar.");
-  if (uploaded.length > MAX_PHOTOS_PER_POST) throw new Error("Demasiadas fotos en una publicación.");
+  if (keys.length === 0) throw new Error("No hay fotos para publicar.");
+  if (keys.length > MAX_PHOTOS_PER_POST) throw new Error("Demasiadas fotos en una publicación.");
+  if (!keys.every((k) => isOwnUploadKey(k, category, guest.id))) {
+    throw new Error("Foto inválida.");
+  }
 
   const db = getDb();
   const [post] = await db
@@ -41,10 +44,10 @@ export async function createPost(
     .returning();
 
   await db.insert(photos).values(
-    uploaded.map((u, i) => ({
+    keys.map((key, i) => ({
       postId: post.id,
-      s3Key: u.key,
-      url: u.publicUrl,
+      s3Key: key,
+      url: publicUrlForKey(key),
       position: i,
     }))
   );

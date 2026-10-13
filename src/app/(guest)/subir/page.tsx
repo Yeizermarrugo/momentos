@@ -91,7 +91,7 @@ export default function SubirPage() {
       );
       await createPost(
         category,
-        slots.map((s) => ({ key: s.key, publicUrl: s.publicUrl })),
+        slots.map((s) => s.key),
         caption
       );
       toast.success("¡Publicado!");

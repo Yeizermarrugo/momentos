@@ -39,8 +39,18 @@ export async function createUploadUrl(category: UploadCategory, guestId: number)
     { expiresIn: UPLOAD_URL_TTL_SECONDS }
   );
 
-  const publicUrl = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${key}`;
-  return { uploadUrl, publicUrl, key };
+  return { uploadUrl, publicUrl: publicUrlForKey(key), key };
+}
+
+export function publicUrlForKey(key: string) {
+  return `https://${BUCKET}.s3.${REGION}.amazonaws.com/${key}`;
+}
+
+// El cliente devuelve los keys que firmó createUploadUrl — validar que sean
+// de este invitado y esta categoría, así no puede publicar el archivo de otro
+// (y después borrárselo de S3 al borrar su propio post).
+export function isOwnUploadKey(key: string, category: UploadCategory, guestId: number) {
+  return new RegExp(`^${category}/${guestId}-\\d+-[a-z0-9]{1,6}\\.webp$`).test(key);
 }
 
 export async function deleteObject(key: string) {

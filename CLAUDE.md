@@ -27,6 +27,7 @@ App de fotos para la boda de Yeizer & Diana (10 dic 2026) — "Momentos". Invita
 
 ## Comandos
 
+- Node **24** (`.nvmrc` + `engines` en package.json) — Node 20 deprecado en Vercel desde 2026-10-01. Local: `nvm use`.
 - `npm run dev` / `build` / `start` / `lint`
 - `npm run db:generate` — genera SQL de migración (diffea contra snapshots locales, NO toca la DB)
 - `npm run db:migrate` — aplica migraciones pendientes (`scripts/migrate.mjs`, no interactivo)

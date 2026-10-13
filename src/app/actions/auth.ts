@@ -1,6 +1,6 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -153,9 +153,21 @@ export async function logoutGuest() {
 }
 
 export async function adminLogin(password: string): Promise<{ ok: boolean; error?: string }> {
+  // Por IP, no global — una key única dejaría que cualquiera bloquee al admin
+  // real fallando 8 veces. En Vercel x-forwarded-for lo pone la plataforma.
+  const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const rateLimitKey = `admin.${ip}`;
+
+  if (isRateLimited(rateLimitKey)) {
+    return { ok: false, error: "Demasiados intentos. Probá de nuevo en unos minutos." };
+  }
+
   if (!checkAdminPassword(password)) {
+    recordFailedAttempt(rateLimitKey);
     return { ok: false, error: "Contraseña incorrecta." };
   }
+
+  clearAttempts(rateLimitKey);
   const jar = await cookies();
   jar.set(ADMIN_SESSION_COOKIE, createAdminSessionToken(), {
     httpOnly: true,
