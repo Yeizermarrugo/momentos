@@ -1,0 +1,1 @@
+ALTER TYPE "public"."reaction_type" ADD VALUE 'like';

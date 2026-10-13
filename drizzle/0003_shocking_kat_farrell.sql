@@ -1,0 +1,1 @@
+ALTER TABLE "guests" ADD COLUMN "password_hash" text;

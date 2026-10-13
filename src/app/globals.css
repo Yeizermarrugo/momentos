@@ -1,0 +1,221 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-sans);
+  --font-display: var(--font-display);
+  --font-script: var(--font-script);
+  --color-gold: var(--gold);
+  --color-gold-deep: var(--gold-deep);
+  --color-wood: var(--wood);
+  --color-pearl: var(--pearl);
+  --color-beige: var(--beige);
+  --color-winner: var(--winner);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* Misma paleta que tarjetas-invitacion (globals.css) — consistencia entre
+   las dos apps de la boda. */
+:root {
+  --pearl: #faf6ef;
+  --beige: #efe4d1;
+  --gold: #b9925c;
+  --gold-deep: #8c6b3d;
+  --wood: #5a3e2b;
+  --ink: #2b211a;
+  --winner: #c99a3f;
+
+  --background: var(--pearl);
+  --foreground: var(--ink);
+  --card: #ffffff;
+  --card-foreground: var(--ink);
+  --popover: #ffffff;
+  --popover-foreground: var(--ink);
+  --primary: var(--gold-deep);
+  --primary-foreground: var(--pearl);
+  --secondary: var(--beige);
+  --secondary-foreground: var(--wood);
+  --muted: #f4ece0;
+  --muted-foreground: #8a7a68;
+  --accent: var(--gold);
+  --accent-foreground: var(--ink);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #e3d5bd;
+  --input: #e3d5bd;
+  --ring: var(--gold);
+  --radius: 0.5rem;
+  --sidebar: var(--beige);
+  --sidebar-foreground: var(--wood);
+  --sidebar-primary: var(--gold-deep);
+  --sidebar-primary-foreground: var(--pearl);
+  --sidebar-accent: var(--gold);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: #e3d5bd;
+  --sidebar-ring: var(--gold);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+.font-script {
+  font-family: var(--font-script), cursive;
+}
+
+/* Grano de papel sutil sobre superficies de tarjeta — mismo tratamiento
+   visual que tarjetas-invitacion, ver .paper-grain ahí. */
+.paper-grain {
+  position: relative;
+}
+.paper-grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.35 0 0 0 0 0.27 0 0 0 0 0.17 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.paper-card {
+  box-shadow: 0 14px 34px -18px rgba(90, 62, 43, 0.35);
+}
+
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Reacciones ❤️/😄: pulso continuo en el botón mientras está activa, y el
+   emoji "vuela" hacia el centro de la foto al tocar (ver reaction-bar y
+   post-card/photo-scroller). */
+@keyframes heart-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  25% {
+    transform: scale(1.18);
+  }
+  40% {
+    transform: scale(0.95);
+  }
+  60% {
+    transform: scale(1.12);
+  }
+}
+.animate-heart-pulse {
+  animation: heart-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes fun-wiggle {
+  0%,
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+  25% {
+    transform: rotate(-10deg) scale(1.08);
+  }
+  50% {
+    transform: rotate(0deg) scale(1);
+  }
+  75% {
+    transform: rotate(10deg) scale(1.08);
+  }
+}
+.animate-fun-wiggle {
+  animation: fun-wiggle 1.8s ease-in-out infinite;
+}
+
+@keyframes reaction-fly-love {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1.3);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  65% {
+    transform: scale(1.25);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.05) translateY(-22px);
+  }
+}
+.reaction-fly-love {
+  animation: reaction-fly-love 750ms ease-out forwards;
+}
+
+@keyframes reaction-fly-fun {
+  0% {
+    opacity: 0;
+    transform: scale(0.3) rotate(0deg);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1.3) rotate(-14deg);
+  }
+  60% {
+    transform: scale(1) rotate(10deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.1) rotate(0deg) translateY(-22px);
+  }
+}
+.reaction-fly-fun {
+  animation: reaction-fly-fun 750ms ease-out forwards;
+}
