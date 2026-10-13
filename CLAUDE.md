@@ -21,12 +21,18 @@ App de fotos para la boda de Yeizer & Diana (10 dic 2026) — "Momentos". Invita
 - `src/lib/rate-limit.ts` — throttle en memoria (best-effort, no Redis — no vale la pena la infra a 40 invitados) para intentos de login fallidos, 8 por `código+asiento` cada 15 min.
 - `src/lib/media-storage.ts` — presigned PUT/GET S3. Cada foto = 1 "base" (`<cat>/<guestId>-<ts>-<16hex>`) → 3 keys: `<base>.jpg` (display), `<base>.thumb.jpg` (miniatura), `originals/<base>.<ext>` (original intacto). El cliente solo devuelve bases; el server valida dueño (`isOwnUploadBase`) y deriva keys/URLs.
 - `src/lib/upload-queue.ts` — cola de subidas **a nivel de módulo** (sobrevive navegación client-side), XHR con progreso real por bytes, reintentos, wake lock. Barra en `components/guest/upload-progress.tsx` (root layout, `sticky`).
-- `src/lib/queries.ts` — toda lectura de datos (feed, perfil, rankings, admin). `flattenFeedPhotos()` y tipo `PhotoDetail` comparten forma entre feed y perfil para `/foto/[id]`. `getGuestWinners()` para el modal de celebración; `getAllGuestsAdmin()` para el reset de contraseña desde admin.
-- `src/app/actions/{auth,posts,admin}.ts` — server actions. `auth.ts`: `registerGuest` (primera vez, crea contraseña) y `loginGuest` (ya tiene contraseña) separados — no existe más `completeRegistration` (era registro+re-login sin password, se reemplazó por el flujo real de abajo). `admin.ts`: `markWinner`/`unmarkWinner` (reversible), `adminDeletePhoto`, `adminResetGuestPassword`.
+- `src/lib/queries.ts` — toda lectura de datos (feed, perfil, rankings, admin). `flattenFeedPhotos()` y tipo `PhotoDetail` comparten forma entre feed y perfil para `/foto/[id]`. `getPhotoIdByShareCode()` + `getPublicPost()` para el link público `/f/<code>`. `getGuestWinners()` para el modal de celebración; `getAllGuestsAdmin()` para el reset de contraseña desde admin.
+- `src/app/actions/{auth,posts,admin,password-reset}.ts` — server actions. `posts.ts`: `signUploads` (firma display+miniatura+original por foto, re-firma en reintentos) y `createPost` (recibe solo bases, valida dueño — antes aceptaba key/URL del cliente y permitía publicar URLs ajenas o borrar archivos de otro invitado). `auth.ts`: `registerGuest` (primera vez, crea contraseña + correo obligatorio) y `loginGuest` (ya tiene contraseña) separados, ambos con `next` validado por `safeNext()`; `adminLogin` con rate limit por IP (`x-forwarded-for`, no global — uno global dejaría bloquear al admin real) — no existe más `completeRegistration` (era registro+re-login sin password, se reemplazó por el flujo real de abajo). `admin.ts`: `markWinner`/`unmarkWinner` (reversible), `adminDeletePhoto`, `adminResetGuestPassword`, `getPhotoDownloadUrl` (original firmado). Borrados de fotos usan `deletePhotoObjects` (display + miniatura + original).
 - `src/app/(guest)/` — feed/subir/buscar/perfil, protegidas por `requireGuest()` en el layout del grupo.
-- `src/app/foto/[id]/` — **ruta real, no modal** (ver Gotchas) — vista de detalle de una foto, scroll-snap tipo Instagram, acepta `?ctx=feed&cat=<categoria>` o `?ctx=perfil&guestId=<id>` para reconstruir la misma lista/orden que el usuario venía viendo.
+- `src/app/f/[code]/` — link público de compartir (sin cuenta), ver Estado.
+- `src/app/recuperar/[token]/` — crear contraseña nueva desde el link del correo.
+- `src/app/foto/[id]/` — **solo con sesión** (sin sesión → `/login?next=...`). **Ruta real, no modal** (ver Gotchas) — vista de detalle de una foto, scroll-snap tipo Instagram, acepta `?ctx=feed&cat=<categoria>` o `?ctx=perfil&guestId=<id>` para reconstruir la misma lista/orden que el usuario venía viendo.
 - `src/app/admin/` — protegida por `src/proxy.ts` (matcher `/admin/:path*`), password único.
 - `scripts/migrate.mjs` — aplica migraciones sin prompts interactivos (ver Gotchas de DB).
+
+## Variables de entorno
+
+`DATABASE_URL`, `SESSION_SECRET`, `ADMIN_PASSWORD`, `AWS_MEDIA_BUCKET_NAME`, `AWS_MEDIA_REGION`, `AWS_MEDIA_ACCESS_KEY_ID`, `AWS_MEDIA_SECRET_ACCESS_KEY`, `RESEND_API_KEY`, `EMAIL_FROM` (`"Nombre <x@dominio-verificado>"`, con comillas), `APP_URL` (dominio real en prod — arma links de correo). Todas van también a Vercel prod.
 
 ## Comandos
 
@@ -43,16 +49,19 @@ App de fotos para la boda de Yeizer & Diana (10 dic 2026) — "Momentos". Invita
 3. **`object-contain` + overlay `absolute` posicionado contra el contenedor grande (no contra la imagen)** deja el overlay flotando en el hueco vacío (letterbox) cuando la foto no calza con el aspect ratio del contenedor. Fix aplicado en `photo-scroller.tsx`: el overlay vive en un wrapper que se ajusta al tamaño REAL de la imagen renderizada (`max-h-full max-w-full` en un div sin `flex-1`, que se encoge al tamaño intrínseco de su `<img>` hijo), no al recuadro completo.
 4. **Foto + botones deben centrarse como un solo grupo** (`flex-col items-center justify-center`) — si los botones están fuera de ese bloque, quedan pegados al borde de la pantalla en vez de justo debajo de la foto, sin importar el alto real de la imagen.
 5. **`/admin` necesita `export const dynamic = "force-dynamic"`** — sin `cookies()`/`headers()` en la página (la protección vive en el proxy), Next la prerenderiza estática en build y hornea datos viejos para siempre.
-6. **`Button` de este proyecto (shadcn base-ui) no soporta `asChild`** — usar `render={<a .../>}`. Aplica también en tarjetas-invitacion. Mismo patrón usado para el link de descarga en el modal de admin (`<a href={url} download>` envuelto en `Button`).
+6. **`Button` de este proyecto (shadcn base-ui) no soporta `asChild`** — usar `render={<a .../>}`. Aplica también en tarjetas-invitacion. Ojo: `<a download>` apuntando a S3 (otro origen) se ignora — la descarga del admin usa URL firmada con `Content-Disposition: attachment` (`getPhotoDownloadUrl`).
 7. **`checkInvitation` ya no bloquea por cupo lleno en el paso 1 del login** — antes devolvía `status: "full"` apenas `registered.length >= maxAllowed`, lo cual tapaba el re-login de un invitado ya registrado si su invitación estaba 100% completa. El tope de cupo ahora solo se chequea en `registerGuest` (crear contraseña nueva), nunca al validar el código o al hacer login.
 8. **"Olvidé mi contraseña" es por correo (Resend)** — el correo se pide al crear contraseña (`registerGuest`) y a los registrados antes se les pide con `EmailPrompt` en el layout de invitado. Desde el login (código + asiento ya elegidos) → `requestPasswordReset` manda link `/recuperar/<token>` al correo guardado (token 32 bytes, en DB solo su SHA-256, 1 h, un solo uso, rate limit 8/15 min por código+asiento). El link se arma con `APP_URL` de env, **nunca con el header Host** (host header injection → robo del token). Sin correo registrado → sigue el reset admin-mediado (`adminResetGuestPassword`). Limitación: la sesión es cookie HMAC sin versión, cambiar la contraseña NO cierra sesiones abiertas en otros dispositivos.
+9. **Migración con columna `NOT NULL` en tabla con filas** — `db:generate` emite `ADD COLUMN ... NOT NULL` que falla. Editar el SQL generado ANTES de `db:migrate`: agregar nullable → `UPDATE` backfill → `SET NOT NULL` (ver `0006`, `share_code`). La DB es compartida y la misma para dev y prod: migrar acá = migrar prod.
+10. **Safari/iOS no codifica WebP en canvas** — `canvas.toBlob("image/webp")` devuelve PNG; con `browser-image-compression` + `maxSizeMB` eso terminaba achicando la foto. Por eso display/miniatura son JPEG. La librería ya topa el canvas de iOS a 4096px.
+11. **Progreso real de subida = XHR**, no `fetch` (fetch no expone `upload.onprogress`).
 
 ## Integración con tarjetas-invitacion
 
 - Botón "Ir a Momentos" en `tarjetas-invitacion/src/components/invite/rsvp-form.tsx` (solo tras **confirmar** asistencia, nunca al rechazar) linkea a `${NEXT_PUBLIC_MOMENTOS_URL}/login?code=<slug>` — `/login` acá lee el param y auto-valida, el invitado no escribe nada.
 - `NEXT_PUBLIC_MOMENTOS_URL` en `tarjetas-invitacion/.env.local` apunta a `http://localhost:3000` en dev — **actualizar al dominio real cuando momentos se despliegue**, y agregar la var a Vercel prod de tarjetas-invitacion en ese momento.
 
-## Estado (2026-09-11)
+## Estado (2026-10-13)
 
 **Configurado y funcional de punta a punta**: `.env.local` completo (DB compartida real, S3 real con bucket+IAM creados, `SESSION_SECRET`/`ADMIN_PASSWORD` generados). `npm run build` pasa limpio. Todas las pantallas del mockup original implementadas con datos reales.
 
@@ -68,7 +77,7 @@ App de fotos para la boda de Yeizer & Diana (10 dic 2026) — "Momentos". Invita
 
 **Logout**: botón (ícono `LogOut`) en `/perfil` propio (solo `isOwner`), `<form action={logoutGuest}>` — server action ya existía, no se usaba en ningún lado hasta ahora.
 
-**Admin rediseñado** (`components/admin/dashboard.tsx`): "Todas las fotos" pasó de tabla a grid de cards (`aspect-[4/5]`, foto grande, overlay con autor/categoría/reacciones) — click abre `Dialog` con la foto completa (`object-contain`, sin recortar), botón **descargar original** (`<a download>`, calidad = la misma que ya se sirve, no hay pipeline de recompresión server-side) y eliminar. Filtros combinables por autor + categoría + orden (siempre descendente sobre la reacción elegida — ej. categoría=romántica + orden=♡, o autor=X + orden=☺). Borrar foto pide confirmación (`window.confirm`) en card y modal. "Marcar ganadora" es **reversible**: click de nuevo (hover → "Quitar", ícono X rojo) llama `unmarkWinner`, borra la fila de `winners`. Sección nueva "Invitados" con botón "Resetear" contraseña por invitado (confirm + `adminResetGuestPassword`).
+**Admin rediseñado** (`components/admin/dashboard.tsx`): "Todas las fotos" pasó de tabla a grid de cards (`aspect-[4/5]`, foto grande, overlay con autor/categoría/reacciones) — click abre `Dialog` con la foto completa (`object-contain`, sin recortar), botón **descargar original** (archivo intacto del celular vía URL firmada; fotos previas a guardar originales bajan la versión display) y eliminar. Filtros combinables por autor + categoría + orden (siempre descendente sobre la reacción elegida — ej. categoría=romántica + orden=♡, o autor=X + orden=☺). Borrar foto pide confirmación (`window.confirm`) en card y modal. "Marcar ganadora" es **reversible**: click de nuevo (hover → "Quitar", ícono X rojo) llama `unmarkWinner`, borra la fila de `winners`. Sección nueva "Invitados" con botón "Resetear" contraseña por invitado (confirm + `adminResetGuestPassword`).
 
 **Celebración de ganador** (`components/guest/winner-celebration.tsx`): al entrar el invitado, si una foto suya fue marcada ganadora, modal con confeti (`canvas-confetti`) + trofeo + thumbnail. Se muestra una vez por `photoId:markedAt` (no solo `photoId`) guardado en `localStorage` del navegador del invitado — la key compuesta con `markedAt` hace que si el admin desmarca y vuelve a marcar la misma foto ganadora, el modal se vea de nuevo solo (sin sincronizar ningún borrado activo entre admin e invitado, que son sesiones/dispositivos distintos).
 
@@ -81,8 +90,9 @@ App de fotos para la boda de Yeizer & Diana (10 dic 2026) — "Momentos". Invita
 - El bucket es de lectura pública entera, incluido `originals/` (EXIF con GPS). Keys no adivinables (16 hex) y nunca expuestas a invitados, pero se podría hacer privado `originals/*` en la bucket policy (requiere el user admin de AWS).
 - `CacheControl` firmado en el PUT no se guarda en S3 (el cliente no manda el header) — las fotos se sirven sin `Cache-Control`. Menor.
 - Probar el flujo real con una invitación `confirmed` de verdad en la DB (no probado end-to-end con datos reales todavía).
-- Probar la compresión WebP (`browser-image-compression`, `subir/page.tsx`) con fotos pesadas reales de celular (12+ MP) — revisada la lógica, se ve sana, pero no se pudo probar en un browser real en esta sesión.
 - Borrar el IAM user `momentos-admin` (AdministratorAccess, usado solo para provisionar el bucket) — ya cumplió su propósito.
 - Actualizar la regla CORS `PUT` del bucket S3 (hoy apunta a un placeholder `.vercel.app`) cuando se sepa el dominio real de deploy.
-- Deploy a Vercel — no hecho todavía.
+- Deploy a Vercel — no hecho todavía. Node 24 ya fijado.
+- Probar vista previa del link `/f/<code>` en WhatsApp real (solo posible ya desplegado).
+- Cambiar contraseña no cierra sesiones abiertas (cookie HMAC sin versión) — agregar si importa.
 - Actualizar `NEXT_PUBLIC_MOMENTOS_URL` en tarjetas-invitacion (dev y prod) cuando eso pase.
