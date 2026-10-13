@@ -194,7 +194,7 @@ export function PostCard({
           </>
         )}
         <button
-          onClick={() => activePhoto && sharePhoto(activePhoto.id, post.caption)}
+          onClick={() => activePhoto && sharePhoto(activePhoto.shareCode, post.caption)}
           title="Compartir"
           aria-label="Compartir foto"
           className="text-muted-foreground"

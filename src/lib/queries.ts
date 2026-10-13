@@ -15,6 +15,7 @@ export function initials(name: string) {
 type PhotoWithReactions = {
   id: number;
   url: string;
+  shareCode: string;
   s3Key: string;
   position: number;
   loveCount: number;
@@ -29,6 +30,7 @@ type PhotoWithReactions = {
 export type PhotoDetail = {
   id: number;
   url: string;
+  shareCode: string;
   postId: number;
   caption: string | null;
   loveCount: number;
@@ -50,6 +52,7 @@ export function flattenFeedPhotos(posts: FeedPost[]): PhotoDetail[] {
     post.photos.map((photo) => ({
       id: photo.id,
       url: photo.url,
+      shareCode: photo.shareCode,
       postId: post.id,
       caption: post.caption,
       loveCount: photo.loveCount,
@@ -117,6 +120,7 @@ export async function getFeedPosts(viewerGuestId: number | null): Promise<FeedPo
     list.push({
       id: ph.id,
       url: ph.url,
+      shareCode: ph.shareCode,
       s3Key: ph.s3Key,
       position: ph.position,
       loveCount: counts.love,
@@ -192,6 +196,9 @@ export async function searchGuests(query: string) {
 export type ProfilePhoto = {
   id: number;
   url: string;
+  shareCode: string;
+  // Miniatura para el grid del perfil (fallback a `url` en fotos previas).
+  thumbUrl: string;
   s3Key: string;
   category: "romantica" | "divertida" | "general";
   postId: number;
@@ -266,6 +273,8 @@ export async function getGuestProfile(
       return {
         id: ph.id,
         url: ph.url,
+        shareCode: ph.shareCode,
+        thumbUrl: ph.thumbUrl ?? ph.url,
         s3Key: ph.s3Key,
         postId: ph.postId,
         category: categoryByPost.get(ph.postId) ?? "general",
@@ -301,7 +310,8 @@ export async function getRankings(): Promise<{
     const rows = await db
       .select({
         photoId: photos.id,
-        url: photos.url,
+        // Tile de 44px en el ranking — miniatura alcanza (fallback a display).
+        url: sql<string>`coalesce(${photos.thumbUrl}, ${photos.url})`,
         guestId: posts.guestId,
         count: sql<number>`count(${reactions.id})`.as("count"),
       })
@@ -309,7 +319,7 @@ export async function getRankings(): Promise<{
       .innerJoin(posts, eq(photos.postId, posts.id))
       .leftJoin(reactions, sql`${reactions.photoId} = ${photos.id} and ${reactions.type} = ${type}`)
       .where(eq(posts.category, category))
-      .groupBy(photos.id, photos.url, posts.guestId)
+      .groupBy(photos.id, photos.url, photos.thumbUrl, posts.guestId)
       .orderBy(desc(sql`count`))
       .limit(10);
 
@@ -379,11 +389,12 @@ export type AdminGuestRow = {
   invitationCode: string;
   seatIndex: number;
   hasPassword: boolean;
+  email: string | null;
 };
 
-// Invitados registrados — para que el admin pueda resetear la contraseña de
-// alguien que se trabó ("olvidé mi contraseña"), ya que no hay canal de
-// recuperación propio (sin email/teléfono en la app, ver auth.ts).
+// Invitados registrados — el admin puede resetear la contraseña de alguien
+// sin correo registrado (los que tienen correo se recuperan solos, ver
+// actions/password-reset.ts).
 export async function getAllGuestsAdmin(): Promise<AdminGuestRow[]> {
   const db = getDb();
   const rows = await db.select().from(guests).orderBy(guests.name);
@@ -394,12 +405,15 @@ export async function getAllGuestsAdmin(): Promise<AdminGuestRow[]> {
     invitationCode: g.invitationCode,
     seatIndex: g.seatIndex,
     hasPassword: !!g.passwordHash,
+    email: g.email,
   }));
 }
 
 export type AdminPhotoRow = {
   photoId: number;
   url: string;
+  thumbUrl: string;
+  hasOriginal: boolean;
   category: string;
   loveCount: number;
   funCount: number;
@@ -413,6 +427,8 @@ export async function getAllPhotosAdmin(): Promise<AdminPhotoRow[]> {
     .select({
       photoId: photos.id,
       url: photos.url,
+      thumbUrl: photos.thumbUrl,
+      originalKey: photos.originalKey,
       category: posts.category,
       guestId: posts.guestId,
       createdAt: photos.createdAt,
@@ -447,6 +463,8 @@ export async function getAllPhotosAdmin(): Promise<AdminPhotoRow[]> {
     return {
       photoId: p.photoId,
       url: p.url,
+      thumbUrl: p.thumbUrl ?? p.url,
+      hasOriginal: !!p.originalKey,
       category: p.category,
       loveCount: counts.love,
       funCount: counts.fun,
@@ -454,4 +472,57 @@ export async function getAllPhotosAdmin(): Promise<AdminPhotoRow[]> {
       guest: { name: guest?.name ?? "—", tableLabel: guest?.tableLabel ?? null },
     };
   });
+}
+
+export async function getPhotoIdByShareCode(code: string): Promise<number | null> {
+  const db = getDb();
+  const [row] = await db.select({ id: photos.id }).from(photos).where(eq(photos.shareCode, code)).limit(1);
+  return row?.id ?? null;
+}
+
+// Vista pública de una foto compartida (visitante sin sesión): solo la
+// publicación de esa foto (su carrusel), no el resto del álbum. Sin
+// viewerReaction — el visitante no reacciona hasta iniciar sesión.
+export async function getPublicPost(photoId: number): Promise<{ photos: PhotoDetail[]; thumbUrl: string } | null> {
+  const db = getDb();
+  const [target] = await db
+    .select({ postId: photos.postId, url: photos.url, thumbUrl: photos.thumbUrl })
+    .from(photos)
+    .where(eq(photos.id, photoId))
+    .limit(1);
+  if (!target) return null;
+
+  const [post] = await db.select().from(posts).where(eq(posts.id, target.postId)).limit(1);
+  if (!post) return null;
+
+  const [guest] = await db.select().from(guests).where(eq(guests.id, post.guestId)).limit(1);
+  const photoRows = await db.select().from(photos).where(eq(photos.postId, post.id)).orderBy(photos.position);
+  const reactionRows = await db
+    .select()
+    .from(reactions)
+    .where(inArray(reactions.photoId, photoRows.map((ph) => ph.id)));
+
+  const guestName = guest?.name ?? "—";
+  return {
+    thumbUrl: target.thumbUrl ?? target.url,
+    photos: photoRows.map((ph) => {
+      const mine = reactionRows.filter((r) => r.photoId === ph.id);
+      return {
+        id: ph.id,
+        url: ph.url,
+        shareCode: ph.shareCode,
+        postId: post.id,
+        caption: post.caption,
+        loveCount: mine.filter((r) => r.type === "love").length,
+        funCount: mine.filter((r) => r.type === "fun").length,
+        likeCount: mine.filter((r) => r.type === "like").length,
+        viewerReaction: null,
+        guestId: post.guestId,
+        guestName,
+        guestInitials: initials(guestName),
+        category: post.category,
+        createdAt: post.createdAt,
+      };
+    }),
+  };
 }

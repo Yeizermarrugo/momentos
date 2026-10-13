@@ -96,7 +96,7 @@ export function ProfileView({
             )}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={cover.url} alt="" className="size-full object-cover" loading="lazy" />
+            <img src={cover.thumbUrl} alt="" className="size-full object-cover" loading="lazy" />
             {count > 1 && (
               <Copy
                 aria-label={`${count} fotos`}

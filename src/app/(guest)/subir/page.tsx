@@ -4,10 +4,9 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { X, Camera } from "lucide-react";
-import imageCompression from "browser-image-compression";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { requestUploadUrls, createPost } from "@/app/actions/posts";
+import { enqueueUpload, preparePhoto, type PreparedPhoto } from "@/lib/upload-queue";
 import { MAX_CAPTION_LENGTH } from "@/lib/format";
 import type { UploadCategory } from "@/lib/media-storage";
 
@@ -19,29 +18,18 @@ const CATEGORIES: { value: UploadCategory; label: string }[] = [
 
 const MAX_PHOTOS_PER_POST = 10;
 
-type PendingFile = { id: string; blob: Blob; previewUrl: string };
-
-async function compress(file: File): Promise<Blob> {
-  return imageCompression(file, {
-    maxSizeMB: 1.2,
-    maxWidthOrHeight: 1920,
-    fileType: "image/webp",
-    initialQuality: 0.82,
-    useWebWorker: true,
-  });
-}
 
 export default function SubirPage() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [category, setCategory] = useState<UploadCategory | null>(null);
-  const [files, setFiles] = useState<PendingFile[]>([]);
+  const [files, setFiles] = useState<PreparedPhoto[]>([]);
   const [caption, setCaption] = useState("");
-  const [publishing, setPublishing] = useState(false);
+  const [preparing, setPreparing] = useState(0);
 
   async function onFilesPicked(list: FileList | null) {
     if (!list || list.length === 0) return;
-    const room = MAX_PHOTOS_PER_POST - files.length;
+    const room = MAX_PHOTOS_PER_POST - files.length - preparing;
     if (room <= 0) {
       toast.error(`Máximo ${MAX_PHOTOS_PER_POST} fotos por publicación.`);
       if (inputRef.current) inputRef.current.value = "";
@@ -49,58 +37,46 @@ export default function SubirPage() {
     }
     const picked = Array.from(list).slice(0, room);
     if (list.length > room) toast.error(`Máximo ${MAX_PHOTOS_PER_POST} fotos por publicación.`);
-    const compressed = await Promise.all(
-      picked.map(async (file) => {
-        try {
-          const blob = await compress(file);
-          return {
-            id: `${file.name}-${Date.now()}-${Math.random()}`,
-            blob,
-            previewUrl: URL.createObjectURL(blob),
-          };
-        } catch {
-          return {
-            id: `${file.name}-${Date.now()}-${Math.random()}`,
-            blob: file,
-            previewUrl: URL.createObjectURL(file),
-          };
-        }
-      })
-    );
-    setFiles((prev) => [...prev, ...compressed]);
     if (inputRef.current) inputRef.current.value = "";
+
+    // Una por una (no Promise.all): en iPhone cada foto de 12–48 MP ocupa
+    // mucha memoria al decodificarla, en paralelo Safari puede matar la pestaña.
+    setPreparing(picked.length);
+    let failed = 0;
+    for (const file of picked) {
+      try {
+        const prepared = await preparePhoto(file);
+        setFiles((prev) => [...prev, prepared]);
+      } catch (err) {
+        console.error("prepare failed", err);
+        failed++;
+      }
+      setPreparing((n) => n - 1);
+    }
+    if (failed > 0) {
+      toast.error(
+        failed === 1
+          ? "No pudimos leer una de las fotos (formato no soportado)."
+          : `No pudimos leer ${failed} fotos (formato no soportado).`
+      );
+    }
   }
 
   function removeFile(id: string) {
-    setFiles((prev) => prev.filter((f) => f.id !== id));
+    setFiles((prev) => {
+      const removed = prev.find((f) => f.id === id);
+      if (removed) URL.revokeObjectURL(removed.previewUrl);
+      return prev.filter((f) => f.id !== id);
+    });
   }
 
-  async function publish() {
-    if (!category || files.length === 0) return;
-    setPublishing(true);
-    try {
-      const slots = await requestUploadUrls(category, files.length);
-      await Promise.all(
-        slots.map((slot, i) =>
-          fetch(slot.uploadUrl, {
-            method: "PUT",
-            headers: { "Content-Type": "image/webp" },
-            body: files[i].blob,
-          })
-        )
-      );
-      await createPost(
-        category,
-        slots.map((s) => s.key),
-        caption
-      );
-      toast.success("¡Publicado!");
-      router.push("/");
-    } catch (err) {
-      console.error("publish failed", err);
-      toast.error("No se pudo publicar. Intentá de nuevo.");
-      setPublishing(false);
-    }
+  // La subida real sigue en segundo plano (lib/upload-queue.ts, barra de
+  // progreso arriba) — el invitado puede seguir navegando o armar otra
+  // publicación mientras tanto.
+  function publish() {
+    if (!category || files.length === 0 || preparing > 0) return;
+    enqueueUpload(category, caption, files);
+    router.push("/");
   }
 
   return (
@@ -154,7 +130,7 @@ export default function SubirPage() {
             onChange={(e) => onFilesPicked(e.target.files)}
           />
 
-          {files.length > 0 && (
+          {(files.length > 0 || preparing > 0) && (
             <div className="mt-3 grid grid-cols-4 gap-2">
               {files.map((f) => (
                 <div key={f.id} className="relative aspect-square overflow-hidden rounded-lg bg-beige">
@@ -167,6 +143,9 @@ export default function SubirPage() {
                     <X className="size-2.5" />
                   </button>
                 </div>
+              ))}
+              {Array.from({ length: preparing }, (_, i) => (
+                <div key={`preparing-${i}`} className="aspect-square animate-pulse rounded-lg bg-beige" />
               ))}
             </div>
           )}
@@ -194,10 +173,10 @@ export default function SubirPage() {
         <Button
           size="lg"
           className="w-full font-extrabold"
-          disabled={!category || files.length === 0 || publishing}
+          disabled={!category || files.length === 0 || preparing > 0}
           onClick={publish}
         >
-          {publishing ? "Publicando…" : "Publicar"}
+          {preparing > 0 ? "Preparando fotos…" : "Publicar"}
         </Button>
       </div>
     </div>

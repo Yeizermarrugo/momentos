@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { guests, photos, posts, winners } from "@/db/schema";
 import { requireAdmin } from "@/lib/session";
-import { deleteObject } from "@/lib/media-storage";
+import { deletePhotoObjects, signDownload } from "@/lib/media-storage";
 
 export async function markWinner(category: "romantica" | "divertida", photoId: number) {
   await requireAdmin();
@@ -47,7 +47,7 @@ export async function adminDeletePhoto(photoId: number) {
   const db = getDb();
 
   const [row] = await db
-    .select({ s3Key: photos.s3Key, postId: photos.postId })
+    .select({ s3Key: photos.s3Key, thumbKey: photos.thumbKey, originalKey: photos.originalKey, postId: photos.postId })
     .from(photos)
     .where(eq(photos.id, photoId))
     .limit(1);
@@ -60,8 +60,25 @@ export async function adminDeletePhoto(photoId: number) {
     await db.delete(posts).where(eq(posts.id, row.postId));
   }
 
-  await deleteObject(row.s3Key).catch(() => {});
+  await deletePhotoObjects(row);
 
   revalidatePath("/admin");
   revalidatePath("/");
+}
+
+// URL firmada de descarga del original (o de la versión display si la foto
+// es previa a guardar originales).
+export async function getPhotoDownloadUrl(photoId: number) {
+  await requireAdmin();
+  const db = getDb();
+  const [row] = await db
+    .select({ s3Key: photos.s3Key, originalKey: photos.originalKey })
+    .from(photos)
+    .where(eq(photos.id, photoId))
+    .limit(1);
+  if (!row) throw new Error("La foto no existe.");
+
+  const key = row.originalKey ?? row.s3Key;
+  const ext = key.split(".").pop();
+  return signDownload(key, `momentos-${photoId}.${ext}`);
 }

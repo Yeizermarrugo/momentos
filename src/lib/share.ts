@@ -2,12 +2,12 @@
 
 import { toast } from "sonner";
 
-// Link directo a la foto — cualquier invitado que ya tenga sesión (cookie
-// guest_session) accede directo al abrirlo, sin re-loguearse. `cat=todas`
-// a propósito: no depende del filtro que tenía activo quien comparte, así
-// el link siempre encuentra la foto sin importar desde dónde se compartió.
-export async function sharePhoto(photoId: number, caption?: string | null) {
-  const url = `${window.location.origin}/foto/${photoId}?ctx=feed&cat=todas`;
+// Link público de la foto (/f/<shareCode>, código aleatorio — no el id
+// correlativo): quien no tiene cuenta ve esa publicación con vista previa en
+// WhatsApp; un invitado con sesión es redirigido a /foto/[id] en el feed
+// completo. Ver src/app/f/[code]/page.tsx.
+export async function sharePhoto(shareCode: string, caption?: string | null) {
+  const url = `${window.location.origin}/f/${shareCode}`;
   const text = caption || "Mirá esta foto de la boda";
 
   if (navigator.share) {

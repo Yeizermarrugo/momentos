@@ -5,7 +5,13 @@ import { toast } from "sonner";
 import { Download, KeyRound, Trophy, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CATEGORY_LABEL } from "@/lib/format";
-import { markWinner, unmarkWinner, adminDeletePhoto, adminResetGuestPassword } from "@/app/actions/admin";
+import {
+  markWinner,
+  unmarkWinner,
+  adminDeletePhoto,
+  adminResetGuestPassword,
+  getPhotoDownloadUrl,
+} from "@/app/actions/admin";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { AdminPhotoRow, AdminGuestRow } from "@/lib/queries";
@@ -42,6 +48,16 @@ export function AdminDashboard({
   const [sortBy, setSortBy] = useState<"recientes" | "love" | "fun" | "like">("recientes");
   const [openPhoto, setOpenPhoto] = useState<AdminPhotoRow | null>(null);
   const [, startTransition] = useTransition();
+
+  // URL firmada con Content-Disposition: attachment — un <a download>
+  // apuntando directo a S3 (otro origen) se ignora y solo abre la foto.
+  async function downloadPhoto(photoId: number) {
+    try {
+      window.location.href = await getPhotoDownloadUrl(photoId);
+    } catch {
+      toast.error("No se pudo descargar la foto.");
+    }
+  }
 
   const guestOptions = useMemo(
     () => [...new Set(rows.map((r) => r.guest.name))].sort((a, b) => a.localeCompare(b)),
@@ -218,7 +234,7 @@ export function AdminDashboard({
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={r.url}
+                    src={r.thumbUrl}
                     alt=""
                     className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
                     loading="lazy"
@@ -281,6 +297,9 @@ export function AdminDashboard({
                       {g.tableLabel && (
                         <span className="block text-[11px] font-medium text-muted-foreground">{g.tableLabel}</span>
                       )}
+                      <span className="block text-[11px] font-medium text-muted-foreground">
+                        {g.email ?? "Sin correo"}
+                      </span>
                     </td>
                     <td className="px-3.5 py-2.5 text-muted-foreground">
                       {g.invitationCode}
@@ -352,12 +371,9 @@ export function AdminDashboard({
                   <span>👍 {openPhoto.likeCount}</span>
                 </div>
                 <div className="flex gap-2 pt-1">
-                  <Button
-                    render={<a href={openPhoto.url} download={`momento-${openPhoto.photoId}`} target="_blank" rel="noopener" />}
-                    variant="outline"
-                  >
+                  <Button variant="outline" onClick={() => downloadPhoto(openPhoto.photoId)}>
                     <Download className="size-4" />
-                    Descargar original
+                    {openPhoto.hasOriginal ? "Descargar original" : "Descargar"}
                   </Button>
                   <Button
                     variant="destructive"

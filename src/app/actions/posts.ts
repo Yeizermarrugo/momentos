@@ -1,11 +1,22 @@
 "use server";
 
+import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { posts, photos, reactions } from "@/db/schema";
 import { requireGuest } from "@/lib/session";
-import { createUploadUrl, deleteObject, isOwnUploadKey, publicUrlForKey, type UploadCategory } from "@/lib/media-storage";
+import {
+  deletePhotoObjects,
+  isAllowedOriginalExt,
+  isOwnUploadBase,
+  newUploadBase,
+  originalExtForType,
+  photoKeys,
+  publicUrlForKey,
+  signPhotoUploads,
+  type UploadCategory,
+} from "@/lib/media-storage";
 import { MAX_CAPTION_LENGTH } from "@/lib/format";
 
 const MAX_PHOTOS_PER_POST = 10;
@@ -16,24 +27,41 @@ function sanitizeCaption(caption: string | undefined | null): string | null {
   return trimmed || null;
 }
 
-export async function requestUploadUrls(category: UploadCategory, count: number) {
+export type UploadRequest = { base?: string; originalType: string };
+
+// Firma las 3 subidas (display, miniatura, original) de cada foto. Con `base`
+// re-firma una foto ya empezada (reintento tras corte de red) en vez de
+// crear una nueva — así no se re-sube lo que ya llegó.
+export async function signUploads(category: UploadCategory, requests: UploadRequest[]) {
   const guest = await requireGuest();
-  const n = Math.min(Math.max(count, 1), MAX_PHOTOS_PER_POST);
-  const slots = await Promise.all(
-    Array.from({ length: n }, () => createUploadUrl(category, guest.id))
+  if (requests.length === 0 || requests.length > MAX_PHOTOS_PER_POST) {
+    throw new Error("Cantidad de fotos inválida.");
+  }
+
+  return Promise.all(
+    requests.map((r) => {
+      const ext = originalExtForType(r.originalType);
+      if (!ext) throw new Error("Formato de foto no soportado.");
+      if (r.base && !isOwnUploadBase(r.base, category, guest.id)) throw new Error("Foto inválida.");
+      return signPhotoUploads(r.base ?? newUploadBase(category, guest.id), ext);
+    })
   );
-  return slots;
 }
 
+// Se llama recién cuando las 3 versiones de todas las fotos ya están en S3
+// — la publicación no aparece en el feed hasta que el original llegó.
 export async function createPost(
   category: UploadCategory,
-  keys: string[],
+  uploaded: { base: string; originalExt: string }[],
   caption?: string
 ) {
   const guest = await requireGuest();
-  if (keys.length === 0) throw new Error("No hay fotos para publicar.");
-  if (keys.length > MAX_PHOTOS_PER_POST) throw new Error("Demasiadas fotos en una publicación.");
-  if (!keys.every((k) => isOwnUploadKey(k, category, guest.id))) {
+  if (uploaded.length === 0) throw new Error("No hay fotos para publicar.");
+  if (uploaded.length > MAX_PHOTOS_PER_POST) throw new Error("Demasiadas fotos en una publicación.");
+  // Los bases los genera signUploads — validar que sean de este invitado y
+  // esta categoría, así no puede publicar el archivo de otro (y después
+  // borrárselo de S3 al borrar su propio post).
+  if (!uploaded.every((u) => isOwnUploadBase(u.base, category, guest.id) && isAllowedOriginalExt(u.originalExt))) {
     throw new Error("Foto inválida.");
   }
 
@@ -44,12 +72,19 @@ export async function createPost(
     .returning();
 
   await db.insert(photos).values(
-    keys.map((key, i) => ({
-      postId: post.id,
-      s3Key: key,
-      url: publicUrlForKey(key),
-      position: i,
-    }))
+    uploaded.map((u, i) => {
+      const { displayKey, thumbKey, originalKey } = photoKeys(u.base, u.originalExt);
+      return {
+        postId: post.id,
+        s3Key: displayKey,
+        url: publicUrlForKey(displayKey),
+        thumbKey,
+        thumbUrl: publicUrlForKey(thumbKey),
+        originalKey,
+        shareCode: randomBytes(9).toString("base64url"),
+        position: i,
+      };
+    })
   );
 
   revalidatePath("/");
@@ -80,7 +115,13 @@ export async function deleteOwnPhoto(photoId: number) {
   const db = getDb();
 
   const [row] = await db
-    .select({ photoId: photos.id, s3Key: photos.s3Key, postId: photos.postId, guestId: posts.guestId })
+    .select({
+      photoId: photos.id,
+      s3Key: photos.s3Key,
+      thumbKey: photos.thumbKey,
+      originalKey: photos.originalKey,
+      postId: photos.postId,
+    })
     .from(photos)
     .innerJoin(posts, eq(photos.postId, posts.id))
     .where(and(eq(photos.id, photoId), eq(posts.guestId, guest.id)))
@@ -95,7 +136,7 @@ export async function deleteOwnPhoto(photoId: number) {
     await db.delete(posts).where(eq(posts.id, row.postId));
   }
 
-  await deleteObject(row.s3Key).catch(() => {});
+  await deletePhotoObjects(row);
 
   revalidatePath("/");
   revalidatePath("/perfil");
@@ -114,11 +155,14 @@ export async function deleteOwnPost(postId: number) {
     .limit(1);
   if (!post) throw new Error("No podés eliminar esta publicación.");
 
-  const photoRows = await db.select({ s3Key: photos.s3Key }).from(photos).where(eq(photos.postId, postId));
+  const photoRows = await db
+    .select({ s3Key: photos.s3Key, thumbKey: photos.thumbKey, originalKey: photos.originalKey })
+    .from(photos)
+    .where(eq(photos.postId, postId));
   await db.delete(photos).where(eq(photos.postId, postId));
   await db.delete(posts).where(eq(posts.id, postId));
 
-  await Promise.all(photoRows.map((ph) => deleteObject(ph.s3Key).catch(() => {})));
+  await Promise.all(photoRows.map(deletePhotoObjects));
 
   revalidatePath("/");
   revalidatePath("/perfil");

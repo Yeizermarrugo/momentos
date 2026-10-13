@@ -3,12 +3,26 @@ import { redirect } from "next/navigation";
 import {
   ADMIN_SESSION_COOKIE,
   GUEST_SESSION_COOKIE,
+  GUEST_SESSION_MAX_AGE,
+  createGuestSessionToken,
   verifyAdminSessionToken,
   verifyGuestSessionToken,
 } from "@/lib/auth";
 import { getDb } from "@/db";
 import { guests } from "@/db/schema";
 import { eq } from "drizzle-orm";
+
+// Solo desde server actions (setear cookies no está permitido al renderizar).
+export async function startGuestSession(guestId: number) {
+  const jar = await cookies();
+  jar.set(GUEST_SESSION_COOKIE, createGuestSessionToken(guestId), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: GUEST_SESSION_MAX_AGE,
+    path: "/",
+  });
+}
 
 export async function getGuestId(): Promise<number | null> {
   const jar = await cookies();

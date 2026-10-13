@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Share2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,15 @@ export function PhotoScroller({
   viewerId: number | null;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Visitante sin cuenta (abrió un link compartido): puede ver y volver a
+  // compartir, pero reaccionar y ver perfiles lo manda al login — y después
+  // del login vuelve a esta misma foto (`next`).
+  const isVisitor = viewerId === null;
+  const qs = searchParams.toString();
+  const loginHref = `/login?next=${encodeURIComponent(qs ? `${pathname}?${qs}` : pathname)}`;
+  const profileHref = (guestId: number) => (isVisitor ? loginHref : `/perfil/${guestId}`);
   const [photos, setPhotos] = useState(initial);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
@@ -78,6 +87,10 @@ export function PhotoScroller({
   }
 
   function react(index: number, type: "love" | "fun" | "like") {
+    if (isVisitor) {
+      router.push(loginHref);
+      return;
+    }
     const photo = photos[index];
     const wasActive = photo.viewerReaction === type;
     const prevReaction = photo.viewerReaction;
@@ -126,18 +139,28 @@ export function PhotoScroller({
   return (
     <div className="flex h-svh flex-col bg-muted">
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted px-3 py-2">
-        <Link
-          href="/"
-          onClick={(e) => {
-            e.preventDefault();
-            router.back();
-          }}
-          aria-label="Volver"
-          className="grid size-7 place-items-center rounded-full border border-border bg-card text-wood"
-        >
-          <ArrowLeft className="size-4" />
-        </Link>
+        {!isVisitor && (
+          <Link
+            href="/"
+            onClick={(e) => {
+              e.preventDefault();
+              router.back();
+            }}
+            aria-label="Volver"
+            className="grid size-7 place-items-center rounded-full border border-border bg-card text-wood"
+          >
+            <ArrowLeft className="size-4" />
+          </Link>
+        )}
         <span className="font-script text-lg leading-none text-wood">Y &amp; D</span>
+        {isVisitor && (
+          <Link
+            href={loginHref}
+            className="ml-auto rounded-full bg-gold-deep px-3 py-1 text-[11px] font-bold text-pearl"
+          >
+            Soy invitado · Entrar
+          </Link>
+        )}
       </div>
 
       <div ref={containerRef} className="scrollbar-hide flex-1 snap-y snap-mandatory overflow-y-auto">
@@ -159,7 +182,7 @@ export function PhotoScroller({
                   mientras se deslizan las fotos (son de la publicación, no
                   de cada foto). */}
               <div className="flex w-full max-w-md shrink-0 items-center justify-between">
-                <Link href={`/perfil/${photo.guestId}`} className="flex items-center gap-2">
+                <Link href={profileHref(photo.guestId)} className="flex items-center gap-2">
                   <span className="flex size-8 items-center justify-center rounded-full border border-gold bg-beige text-[11px] font-extrabold text-wood">
                     {photo.guestInitials}
                   </span>
@@ -266,7 +289,7 @@ export function PhotoScroller({
                       <p className="text-[13px] text-foreground">
                         {photo.caption ? (
                           <>
-                            <Link href={`/perfil/${photo.guestId}`} className="font-bold hover:underline">
+                            <Link href={profileHref(photo.guestId)} className="font-bold hover:underline">
                               {photo.guestName}
                             </Link>{" "}
                             {photo.caption}
@@ -356,7 +379,7 @@ export function PhotoScroller({
                   </>
                 )}
                 <button
-                  onClick={() => sharePhoto(photo.id, photo.caption)}
+                  onClick={() => sharePhoto(photo.shareCode, photo.caption)}
                   title="Compartir"
                   aria-label="Compartir foto"
                   className="text-muted-foreground"

@@ -1,13 +1,8 @@
-import { notFound } from "next/navigation";
-import { requireGuest, getGuestId } from "@/lib/session";
+import { notFound, redirect } from "next/navigation";
+import { getGuestId } from "@/lib/session";
 import { getFeedPosts, getGuestProfile, flattenFeedPhotos, initials, type PhotoDetail } from "@/lib/queries";
 import { PhotoScroller } from "@/components/guest/photo-scroller";
 
-// Vista de detalle como ruta real (no modal/overlay) — a propósito: el
-// visor fullscreen con position:fixed dejaba pasar el fondo de atrás en el
-// simulador de teléfono del usuario (fixed + ancestro con transform: scale
-// es un problema conocido de CSS). Una página normal con scroll normal no
-// tiene ese problema, punto.
 export default async function FotoPage({
   params,
   searchParams,
@@ -15,13 +10,19 @@ export default async function FotoPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ ctx?: string; cat?: string; guestId?: string }>;
 }) {
-  await requireGuest();
   const { id } = await params;
   const photoId = Number(id);
   if (!Number.isInteger(photoId)) notFound();
 
   const sp = await searchParams;
   const viewerId = await getGuestId();
+  // Solo invitados — la vista pública sin cuenta es /f/<shareCode> (el id
+  // es correlativo y permitiría recorrer el álbum entero). Tras el login
+  // vuelve acá.
+  if (!viewerId) {
+    const qs = new URLSearchParams(sp as Record<string, string>).toString();
+    redirect(`/login?next=${encodeURIComponent(`/foto/${photoId}${qs ? `?${qs}` : ""}`)}`);
+  }
 
   let list: PhotoDetail[];
 
@@ -32,6 +33,7 @@ export default async function FotoPage({
     list = profile.photos.map((p) => ({
       id: p.id,
       url: p.url,
+      shareCode: p.shareCode,
       postId: p.postId,
       caption: p.caption,
       loveCount: p.loveCount,

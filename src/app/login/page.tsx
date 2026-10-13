@@ -7,18 +7,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { checkInvitationCode, loginGuest, registerGuest, type CodeCheckResult } from "@/app/actions/auth";
+import { requestPasswordReset } from "@/app/actions/password-reset";
 
 type Picked = { seatIndex: 1 | 2; name: string; hasPassword: boolean };
 
 function LoginForm() {
   const searchParams = useSearchParams();
   const codeFromLink = searchParams.get("code") ?? "";
+  // Viene de una foto compartida (/foto/[id]) — después de entrar vuelve ahí.
+  const next = searchParams.get("next") ?? undefined;
 
   const [code, setCode] = useState(codeFromLink);
   const [checked, setChecked] = useState<Extract<CodeCheckResult, { valid: true }> | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [email, setEmail] = useState("");
+  const [resetSentTo, setResetSentTo] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const autoChecked = useRef(false);
 
@@ -49,13 +54,14 @@ function LoginForm() {
     setPicked({ seatIndex, name, hasPassword });
     setPassword("");
     setConfirmPassword("");
+    setResetSentTo(null);
   }
 
   function submitLogin() {
     if (!picked) return;
     if (!password) return;
     startTransition(async () => {
-      const result = await loginGuest(code, picked.seatIndex, password);
+      const result = await loginGuest(code, picked.seatIndex, password, next);
       if (result && !result.ok) toast.error(result.error);
     });
   }
@@ -63,8 +69,17 @@ function LoginForm() {
   function submitRegister() {
     if (!picked) return;
     startTransition(async () => {
-      const result = await registerGuest(code, picked.seatIndex, picked.name, password, confirmPassword);
+      const result = await registerGuest(code, picked.seatIndex, picked.name, password, confirmPassword, email, next);
       if (result && !result.ok) toast.error(result.error);
+    });
+  }
+
+  function forgotPassword() {
+    if (!picked) return;
+    startTransition(async () => {
+      const result = await requestPasswordReset(code, picked.seatIndex);
+      if (result.ok) setResetSentTo(result.maskedEmail);
+      else toast.error(result.error);
     });
   }
 
@@ -156,9 +171,21 @@ function LoginForm() {
             <Button className="w-full" size="lg" onClick={submitLogin} disabled={pending || !password}>
               {pending ? "Ingresando…" : "Ingresar"}
             </Button>
-            <p className="text-center text-xs text-muted-foreground">
-              ¿Olvidaste tu contraseña? Pedile al novio que te la resetee.
-            </p>
+            {resetSentTo ? (
+              <p className="rounded-xl bg-muted px-3 py-2.5 text-center text-xs text-muted-foreground">
+                Te mandamos un link a <b className="text-foreground">{resetSentTo}</b> para crear una contraseña
+                nueva. Vence en 1 hora — revisá también spam.
+              </p>
+            ) : (
+              <button
+                type="button"
+                className="text-xs font-semibold text-wood underline underline-offset-2 block mx-auto"
+                onClick={forgotPassword}
+                disabled={pending}
+              >
+                ¿Olvidaste tu contraseña?
+              </button>
+            )}
             <button
               type="button"
               className="text-xs text-muted-foreground underline underline-offset-2 block mx-auto"
@@ -175,6 +202,23 @@ function LoginForm() {
               Primera vez acá — creá una contraseña para volver a entrar más adelante.
             </p>
             <div className="space-y-2">
+              <Label htmlFor="email" className="text-sm">
+                Tu correo
+              </Label>
+              <Input
+                id="email"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="nombre@correo.com"
+                autoFocus
+                disabled={pending}
+              />
+              <p className="text-[11px] text-muted-foreground">Solo para recuperar tu contraseña si la olvidás.</p>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="new-password" className="text-sm">
                 Nueva contraseña
               </Label>
@@ -183,7 +227,6 @@ function LoginForm() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                autoFocus
                 disabled={pending}
               />
             </div>
@@ -204,7 +247,7 @@ function LoginForm() {
               className="w-full"
               size="lg"
               onClick={submitRegister}
-              disabled={pending || !password || !confirmPassword}
+              disabled={pending || !email || !password || !confirmPassword}
             >
               {pending ? "Creando…" : "Crear contraseña y entrar"}
             </Button>

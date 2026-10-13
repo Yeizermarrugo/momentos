@@ -36,6 +36,20 @@
       "when": 1789178420049,
       "tag": "0004_hesitant_the_fury",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791916428413,
+      "tag": "0005_icy_miss_america",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791917100994,
+      "tag": "0006_reflective_silverclaw",
+      "breakpoints": true
     }
   ]
 }

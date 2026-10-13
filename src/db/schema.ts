@@ -30,6 +30,10 @@ export const guests = pgTable(
     // legacy de pruebas pre-login-con-contraseña quedan sin setear hasta
     // que ese invitado pase por el flujo de "crear contraseña" una vez más.
     passwordHash: text("password_hash"),
+    // Para recuperar la contraseña por correo (ver actions/password-reset.ts).
+    // Nullable: invitados registrados antes de pedir correo — se les pide
+    // al entrar (EmailPrompt). No único: una pareja puede compartir correo.
+    email: text("email"),
     tableLabel: text("table_label"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -57,9 +61,34 @@ export const photos = pgTable("photos", {
   postId: integer("post_id")
     .notNull()
     .references(() => posts.id, { onDelete: "cascade" }),
+  // Versión para mostrar (JPEG ~2048px) — feed, detalle, modal de admin.
   s3Key: text("s3_key").notNull(),
   url: text("url").notNull(),
+  // Miniatura (~640px) para grids (perfil, admin). Nullable: fotos previas
+  // a la miniatura caen a `url`.
+  thumbKey: text("thumb_key"),
+  thumbUrl: text("thumb_url"),
+  // Archivo original tal cual salió del celular (sin recomprimir) — solo lo
+  // descarga el admin, nunca se muestra en la app. Nullable por fotos previas.
+  originalKey: text("original_key"),
+  // Código aleatorio para el link público de compartir (/f/<code>) — el id
+  // es correlativo y permitiría recorrer todo el álbum sin cuenta.
+  shareCode: text("share_code").notNull().unique(),
   position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Link de "olvidé mi contraseña": se guarda solo el hash SHA-256 del token
+// (el token en claro viaja únicamente en el correo). Un solo uso, vence en
+// 1 hora.
+export const passwordResets = pgTable("password_resets", {
+  id: serial("id").primaryKey(),
+  guestId: integer("guest_id")
+    .notNull()
+    .references(() => guests.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

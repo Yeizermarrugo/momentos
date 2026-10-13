@@ -6,20 +6,19 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { guests } from "@/db/schema";
 import { checkInvitation } from "@/lib/invitations";
+import { startGuestSession } from "@/lib/session";
+import { normalizeEmail } from "@/lib/email";
 import {
-  createGuestSessionToken,
+  MIN_PASSWORD_LENGTH,
   createAdminSessionToken,
   checkAdminPassword,
   hashPassword,
   verifyPassword,
   GUEST_SESSION_COOKIE,
-  GUEST_SESSION_MAX_AGE,
   ADMIN_SESSION_COOKIE,
   ADMIN_SESSION_MAX_AGE,
 } from "@/lib/auth";
 import { isRateLimited, recordFailedAttempt, clearAttempts } from "@/lib/rate-limit";
-
-const MIN_PASSWORD_LENGTH = 4;
 
 export type CodeCheckResult =
   | { valid: false; error: string }
@@ -58,15 +57,10 @@ export async function checkInvitationCode(code: string): Promise<CodeCheckResult
   }
 }
 
-async function startGuestSession(guestId: number) {
-  const jar = await cookies();
-  jar.set(GUEST_SESSION_COOKIE, createGuestSessionToken(guestId), {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: GUEST_SESSION_MAX_AGE,
-    path: "/",
-  });
+// Solo rutas internas — un `next` arbitrario sería un open redirect
+// (link de phishing "momentos.../login?next=https://otro-sitio").
+function safeNext(next: string | undefined) {
+  return next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : "/";
 }
 
 // Primera vez de este invitado (o fila legacy sin contraseña todavía):
@@ -77,9 +71,18 @@ export async function registerGuest(
   seatIndex: 1 | 2,
   name: string,
   password: string,
-  confirmPassword: string
+  confirmPassword: string,
+  email: string,
+  next?: string
 ): Promise<{ ok: boolean; error?: string }> {
   const trimmed = code.trim();
+
+  // Correo obligatorio al crear contraseña — es el canal para recuperarla
+  // (actions/password-reset.ts).
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return { ok: false, error: "Escribí un correo válido — lo usamos si olvidás tu contraseña." };
+  }
 
   if (password.length < MIN_PASSWORD_LENGTH) {
     return { ok: false, error: `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.` };
@@ -105,22 +108,29 @@ export async function registerGuest(
   const db = getDb();
   const [guest] = await db
     .insert(guests)
-    .values({ invitationCode: trimmed, seatIndex, name, passwordHash: hashPassword(password) })
+    .values({
+      invitationCode: trimmed,
+      seatIndex,
+      name,
+      email: normalizedEmail,
+      passwordHash: hashPassword(password),
+    })
     .onConflictDoUpdate({
       target: [guests.invitationCode, guests.seatIndex],
-      set: { name, passwordHash: hashPassword(password) },
+      set: { name, email: normalizedEmail, passwordHash: hashPassword(password) },
     })
     .returning();
 
   await startGuestSession(guest.id);
-  redirect("/");
+  redirect(safeNext(next));
 }
 
 // Invitado que ya tiene contraseña seteada — solo valida y abre sesión.
 export async function loginGuest(
   code: string,
   seatIndex: 1 | 2,
-  password: string
+  password: string,
+  next?: string
 ): Promise<{ ok: boolean; error?: string }> {
   const trimmed = code.trim();
   const rateLimitKey = `${trimmed}.${seatIndex}`;
@@ -143,7 +153,7 @@ export async function loginGuest(
 
   clearAttempts(rateLimitKey);
   await startGuestSession(guest.id);
-  redirect("/");
+  redirect(safeNext(next));
 }
 
 export async function logoutGuest() {
