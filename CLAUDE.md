@@ -93,7 +93,7 @@ App de fotos para la boda de Yeizer & Diana (10 dic 2026) — "Momentos". Invita
 - `CacheControl` firmado en el PUT no se guarda en S3 (el cliente no manda el header) — las fotos se sirven sin `Cache-Control`. Menor.
 - Probar el flujo real con una invitación `confirmed` de verdad en la DB (no probado end-to-end con datos reales todavía).
 - Borrar el IAM user `momentos-admin` (AdministratorAccess, usado solo para provisionar el bucket) — ya cumplió su propósito.
-- Actualizar la regla CORS `PUT` del bucket S3 (hoy apunta a un placeholder `.vercel.app`) cuando se sepa el dominio real de deploy.
+- (Opcional) CORS del bucket S3 hoy permite `GET` y `PUT` desde `*` — funciona en cualquier dominio sin tocar nada (el `PUT` igual exige URL firmada por el server). Se puede restringir `PUT` al dominio real tras el deploy, como capa extra.
 - Deploy a Vercel — no hecho todavía. Node 24 ya fijado.
 - Probar vista previa del link `/f/<code>` en WhatsApp real (solo posible ya desplegado).
 - Cambiar contraseña no cierra sesiones abiertas (cookie HMAC sin versión) — agregar si importa.
