@@ -30,14 +30,20 @@ export const guests = pgTable(
     // legacy de pruebas pre-login-con-contraseña quedan sin setear hasta
     // que ese invitado pase por el flujo de "crear contraseña" una vez más.
     passwordHash: text("password_hash"),
-    // Para recuperar la contraseña por correo (ver actions/password-reset.ts).
-    // Nullable: invitados registrados antes de pedir correo — se les pide
-    // al entrar (EmailPrompt). No único: una pareja puede compartir correo.
+    // Usuario del login (correo + contraseña) y canal para recuperarla (ver
+    // actions/password-reset.ts). Único — cada persona su propio correo,
+    // siempre en minúsculas (normalizeEmail). Nullable: invitados
+    // registrados antes de pedir correo — lo vinculan desde "Crear cuenta"
+    // con su código + contraseña actual (linkLegacyGuest), o con EmailPrompt
+    // si ya tienen sesión abierta.
     email: text("email"),
     tableLabel: text("table_label"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [unique("guests_code_seat_unique").on(t.invitationCode, t.seatIndex)]
+  (t) => [
+    unique("guests_code_seat_unique").on(t.invitationCode, t.seatIndex),
+    unique("guests_email_unique").on(t.email),
+  ]
 );
 
 // Una publicación = 1+ fotos (carrusel si hay varias, hasta MAX_PHOTOS_PER_POST

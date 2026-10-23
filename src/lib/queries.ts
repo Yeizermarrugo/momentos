@@ -1,4 +1,4 @@
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { guests, posts, photos, reactions, winners } from "@/db/schema";
 import type { Guest } from "@/db/schema";
@@ -525,4 +525,16 @@ export async function getPublicPost(photoId: number): Promise<{ photos: PhotoDet
       };
     }),
   };
+}
+
+// Correo único entre invitados (también hay constraint en DB). exceptGuestId
+// = la propia fila, para que re-guardar el mismo correo no choque consigo.
+export async function isEmailTaken(email: string, exceptGuestId?: number): Promise<boolean> {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: guests.id })
+    .from(guests)
+    .where(exceptGuestId ? and(eq(guests.email, email), ne(guests.id, exceptGuestId)) : eq(guests.email, email))
+    .limit(1);
+  return !!row;
 }

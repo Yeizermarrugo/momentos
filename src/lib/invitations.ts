@@ -34,6 +34,9 @@ export type InvitationCheck =
       // De esas, cuáles ya tienen contraseña seteada — un invitado ya
       // registrado entra por login (1 password), el resto crea contraseña.
       seatsWithPassword: number[];
+      // Cuáles ya tienen correo — con contraseña + correo = cuenta completa,
+      // entra por el login normal (correo + contraseña).
+      seatsWithEmail: number[];
     };
 
 async function fetchInvitation(code: string): Promise<InvitationRow | null> {
@@ -66,7 +69,7 @@ export async function checkInvitation(code: string): Promise<InvitationCheck> {
 
   const db = getDb();
   const registered = await db
-    .select({ seatIndex: guests.seatIndex, passwordHash: guests.passwordHash })
+    .select({ seatIndex: guests.seatIndex, passwordHash: guests.passwordHash, email: guests.email })
     .from(guests)
     .where(eq(guests.invitationCode, code.trim()));
 
@@ -78,5 +81,6 @@ export async function checkInvitation(code: string): Promise<InvitationCheck> {
     maxAllowed,
     takenSeatIndexes: registered.map((r) => r.seatIndex),
     seatsWithPassword: registered.filter((r) => r.passwordHash).map((r) => r.seatIndex),
+    seatsWithEmail: registered.filter((r) => r.email).map((r) => r.seatIndex),
   };
 }

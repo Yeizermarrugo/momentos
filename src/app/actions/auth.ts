@@ -8,6 +8,7 @@ import { guests } from "@/db/schema";
 import { checkInvitation } from "@/lib/invitations";
 import { startGuestSession } from "@/lib/session";
 import { normalizeEmail } from "@/lib/email";
+import { isEmailTaken } from "@/lib/queries";
 import {
   MIN_PASSWORD_LENGTH,
   createAdminSessionToken,
@@ -28,6 +29,7 @@ export type CodeCheckResult =
       guestName1: string;
       guestName2: string | null;
       seatsWithPassword: number[];
+      seatsWithEmail: number[];
     };
 
 const STATUS_MESSAGE: Record<string, string> = {
@@ -51,6 +53,7 @@ export async function checkInvitationCode(code: string): Promise<CodeCheckResult
       guestName1: result.guestName1,
       guestName2: result.guestName2,
       seatsWithPassword: result.seatsWithPassword,
+      seatsWithEmail: result.seatsWithEmail,
     };
   } catch {
     return { valid: false, error: "No pudimos validar el código. Intentá de nuevo en un momento." };
@@ -63,9 +66,13 @@ function safeNext(next: string | undefined) {
   return next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : "/";
 }
 
-// Primera vez de este invitado (o fila legacy sin contraseña todavía):
-// crea/actualiza su contraseña. Si ya tiene una seteada, hay que usar
-// loginGuest en su lugar.
+const EMAIL_TAKEN = "Ese correo ya está en uso por otra cuenta. Cada persona necesita su propio correo.";
+
+// Crear cuenta: el código es obligatorio acá — controla el cupo (cada
+// invitación es de 1 o 2 personas, tope `rsvp_attendees`). También sirve
+// para una fila sin contraseña (reset del admin): vuelve a crearla.
+// Si ya tiene contraseña, hay que usar loginGuest (o linkLegacyGuest si le
+// falta el correo).
 export async function registerGuest(
   code: string,
   seatIndex: 1 | 2,
@@ -77,11 +84,9 @@ export async function registerGuest(
 ): Promise<{ ok: boolean; error?: string }> {
   const trimmed = code.trim();
 
-  // Correo obligatorio al crear contraseña — es el canal para recuperarla
-  // (actions/password-reset.ts).
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) {
-    return { ok: false, error: "Escribí un correo válido — lo usamos si olvidás tu contraseña." };
+    return { ok: false, error: "Escribí un correo válido — es con lo que vas a iniciar sesión." };
   }
 
   if (password.length < MIN_PASSWORD_LENGTH) {
@@ -98,7 +103,7 @@ export async function registerGuest(
     return { ok: false, error: STATUS_MESSAGE[result.status] };
   }
   if (result.seatsWithPassword.includes(seatIndex)) {
-    return { ok: false, error: "Ese invitado ya tiene contraseña. Iniciá sesión." };
+    return { ok: false, error: "Esa persona ya tiene cuenta. Iniciá sesión con tu correo." };
   }
   const isRelogin = result.takenSeatIndexes.includes(seatIndex);
   if (!isRelogin && result.takenSeatIndexes.length >= result.maxAllowed) {
@@ -106,34 +111,88 @@ export async function registerGuest(
   }
 
   const db = getDb();
-  const [guest] = await db
-    .insert(guests)
-    .values({
-      invitationCode: trimmed,
-      seatIndex,
-      name,
-      email: normalizedEmail,
-      passwordHash: hashPassword(password),
-    })
-    .onConflictDoUpdate({
-      target: [guests.invitationCode, guests.seatIndex],
-      set: { name, email: normalizedEmail, passwordHash: hashPassword(password) },
-    })
-    .returning();
+  const [existing] = await db
+    .select({ id: guests.id })
+    .from(guests)
+    .where(and(eq(guests.invitationCode, trimmed), eq(guests.seatIndex, seatIndex)))
+    .limit(1);
+  if (await isEmailTaken(normalizedEmail, existing?.id)) {
+    return { ok: false, error: EMAIL_TAKEN };
+  }
 
+  let guestId: number;
+  try {
+    const [guest] = await db
+      .insert(guests)
+      .values({
+        invitationCode: trimmed,
+        seatIndex,
+        name,
+        email: normalizedEmail,
+        passwordHash: hashPassword(password),
+      })
+      .onConflictDoUpdate({
+        target: [guests.invitationCode, guests.seatIndex],
+        set: { name, email: normalizedEmail, passwordHash: hashPassword(password) },
+      })
+      .returning();
+    guestId = guest.id;
+  } catch {
+    // Carrera contra el constraint guests_email_unique.
+    return { ok: false, error: EMAIL_TAKEN };
+  }
+
+  await startGuestSession(guestId);
+  redirect(safeNext(next));
+}
+
+// Login normal: correo + contraseña.
+export async function loginGuest(
+  email: string,
+  password: string,
+  next?: string
+): Promise<{ ok: boolean; error?: string }> {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !password) {
+    return { ok: false, error: "Correo o contraseña incorrectos." };
+  }
+  const rateLimitKey = `login.${normalizedEmail}`;
+
+  if (isRateLimited(rateLimitKey)) {
+    return { ok: false, error: "Demasiados intentos. Probá de nuevo en unos minutos." };
+  }
+
+  const db = getDb();
+  const [guest] = await db.select().from(guests).where(eq(guests.email, normalizedEmail)).limit(1);
+
+  // Mismo mensaje si el correo no existe — no revela quién tiene cuenta.
+  if (!guest || !verifyPassword(password, guest.passwordHash)) {
+    recordFailedAttempt(rateLimitKey);
+    return { ok: false, error: "Correo o contraseña incorrectos." };
+  }
+
+  clearAttempts(rateLimitKey);
   await startGuestSession(guest.id);
   redirect(safeNext(next));
 }
 
-// Invitado que ya tiene contraseña seteada — solo valida y abre sesión.
-export async function loginGuest(
+// Invitado registrado antes de que el login fuera por correo: tiene
+// contraseña pero no correo. Entra por "Crear cuenta" con su código, elige
+// quién es, y confirma con su contraseña actual + el correo a vincular.
+export async function linkLegacyGuest(
   code: string,
   seatIndex: 1 | 2,
   password: string,
+  email: string,
   next?: string
 ): Promise<{ ok: boolean; error?: string }> {
   const trimmed = code.trim();
   const rateLimitKey = `${trimmed}.${seatIndex}`;
+
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return { ok: false, error: "Escribí un correo válido — es con lo que vas a iniciar sesión." };
+  }
 
   if (isRateLimited(rateLimitKey)) {
     return { ok: false, error: "Demasiados intentos. Probá de nuevo en unos minutos." };
@@ -150,8 +209,21 @@ export async function loginGuest(
     recordFailedAttempt(rateLimitKey);
     return { ok: false, error: "Contraseña incorrecta." };
   }
-
   clearAttempts(rateLimitKey);
+
+  if (guest.email) {
+    return { ok: false, error: "Esa persona ya tiene correo vinculado. Iniciá sesión con tu correo." };
+  }
+  if (await isEmailTaken(normalizedEmail, guest.id)) {
+    return { ok: false, error: EMAIL_TAKEN };
+  }
+
+  try {
+    await db.update(guests).set({ email: normalizedEmail }).where(eq(guests.id, guest.id));
+  } catch {
+    return { ok: false, error: EMAIL_TAKEN };
+  }
+
   await startGuestSession(guest.id);
   redirect(safeNext(next));
 }
