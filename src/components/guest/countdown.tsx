@@ -17,24 +17,29 @@ function parts(ms: number) {
 
 // Pantalla previa a la apertura (ver lib/opening.ts): la cuenta ya existe,
 // el resto de la app espera al día de la boda. `remainingMs` viene del
-// server para que el primer render coincida con el HTML (sin hydration
-// mismatch); después cuenta contra el reloj del navegador. Al llegar a 0
-// refresca y el layout ya muestra la app.
-export function Countdown({ name, opensAtMs, remainingMs }: { name: string; opensAtMs: number; remainingMs: number }) {
+// server: el primer render coincide con el HTML (sin hydration mismatch) y
+// el plazo se ancla a "ahora + remainingMs" en el navegador, no a la hora
+// absoluta de apertura — así un celular con la hora adelantada/atrasada no corre el
+// conteo. Al llegar a 0 refresca; si el server todavía dice cerrado (unos
+// segundos de diferencia), sigue reintentando cada pocos segundos en vez de
+// quedarse en 00:00:00:00.
+export function Countdown({ name, remainingMs }: { name: string; remainingMs: number }) {
   const router = useRouter();
   const [remaining, setRemaining] = useState(remainingMs);
 
   useEffect(() => {
+    const deadline = Date.now() + remainingMs;
+    let lastRefresh = 0;
     const id = setInterval(() => {
-      const left = opensAtMs - Date.now();
+      const left = deadline - Date.now();
       setRemaining(left);
-      if (left <= 0) {
-        clearInterval(id);
+      if (left <= 0 && Date.now() - lastRefresh > 3000) {
+        lastRefresh = Date.now();
         router.refresh();
       }
     }, 1000);
     return () => clearInterval(id);
-  }, [opensAtMs, router]);
+  }, [remainingMs, router]);
 
   const firstName = name.trim().split(/\s+/)[0];
 

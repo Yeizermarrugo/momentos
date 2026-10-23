@@ -4,14 +4,14 @@ import { TabBar } from "@/components/guest/tabbar";
 import { WinnerCelebration } from "@/components/guest/winner-celebration";
 import { EmailPrompt } from "@/components/guest/email-prompt";
 import { Countdown } from "@/components/guest/countdown";
-import { isOpenFor, msUntilOpen, opensAt } from "@/lib/opening";
+import { isOpenFor, msUntilOpen } from "@/lib/opening";
 
 export default async function GuestLayout({ children }: { children: React.ReactNode }) {
   const guest = await requireGuest();
 
   // Antes del día de la boda: solo el conteo (ver lib/opening.ts).
   if (!isOpenFor(guest.email)) {
-    return <Countdown name={guest.name} opensAtMs={opensAt().getTime()} remainingMs={msUntilOpen()} />;
+    return <Countdown name={guest.name} remainingMs={msUntilOpen()} />;
   }
 
   const myWinners = await getGuestWinners(guest.id);
