@@ -8,8 +8,9 @@ import { getDb } from "@/db";
 import { guests, passwordResets } from "@/db/schema";
 import { hashPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth";
 import { requireGuest, startGuestSession } from "@/lib/session";
-import { appUrl, maskEmail, normalizeEmail, passwordResetEmail, sendEmail } from "@/lib/email";
+import { appUrl, normalizeEmail, passwordResetEmail, sendEmail } from "@/lib/email";
 import { isRateLimited, recordFailedAttempt } from "@/lib/rate-limit";
+import { isEmailTaken } from "@/lib/queries";
 
 const RESET_TTL_MS = 60 * 60 * 1000;
 
@@ -17,35 +18,24 @@ function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-// "Olvidé mi contraseña" desde el login: el invitado ya escribió su código y
-// eligió quién es, así que no hace falta pedirle el correo — se manda al que
-// registró. Devuelve el correo enmascarado para confirmar a dónde fue.
-export async function requestPasswordReset(
-  code: string,
-  seatIndex: 1 | 2
-): Promise<{ ok: true; maskedEmail: string } | { ok: false; error: string }> {
-  const trimmed = code.trim();
+// "Olvidé mi contraseña" desde el login (correo + contraseña). Responde
+// igual exista o no una cuenta con ese correo — no revela quién está
+// registrado.
+export async function requestPasswordReset(email: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return { ok: false, error: "Escribí tu correo arriba para mandarte el link." };
+
   // Cada pedido cuenta (no solo los fallidos) — evita usar esto para
   // inundar de correos la casilla de alguien.
-  const rateLimitKey = `reset.${trimmed}.${seatIndex}`;
+  const rateLimitKey = `reset.${normalized}`;
   if (isRateLimited(rateLimitKey)) {
     return { ok: false, error: "Ya pediste varios correos. Probá de nuevo en unos minutos." };
   }
   recordFailedAttempt(rateLimitKey);
 
   const db = getDb();
-  const [guest] = await db
-    .select()
-    .from(guests)
-    .where(and(eq(guests.invitationCode, trimmed), eq(guests.seatIndex, seatIndex)))
-    .limit(1);
-
-  if (!guest?.email) {
-    return {
-      ok: false,
-      error: "No tenés un correo registrado. Pedile al novio que te resetee la contraseña.",
-    };
-  }
+  const [guest] = await db.select().from(guests).where(eq(guests.email, normalized)).limit(1);
+  if (!guest) return { ok: true };
 
   const token = randomBytes(32).toString("base64url");
   await db.insert(passwordResets).values({
@@ -55,13 +45,13 @@ export async function requestPasswordReset(
   });
 
   try {
-    await sendEmail({ to: guest.email, ...passwordResetEmail(guest.name, `${appUrl()}/recuperar/${token}`) });
+    await sendEmail({ to: guest.email!, ...passwordResetEmail(guest.name, `${appUrl()}/recuperar/${token}`) });
   } catch (err) {
     console.error("reset email failed", err);
     return { ok: false, error: "No pudimos mandar el correo. Intentá de nuevo en un momento." };
   }
 
-  return { ok: true, maskedEmail: maskEmail(guest.email) };
+  return { ok: true };
 }
 
 async function findValidReset(token: string) {
@@ -121,8 +111,15 @@ export async function saveGuestEmail(email: string): Promise<{ ok: boolean; erro
   const normalized = normalizeEmail(email);
   if (!normalized) return { ok: false, error: "Ese correo no parece válido." };
 
+  const taken = "Ese correo ya está en uso por otra cuenta.";
+  if (await isEmailTaken(normalized, guest.id)) return { ok: false, error: taken };
+
   const db = getDb();
-  await db.update(guests).set({ email: normalized }).where(eq(guests.id, guest.id));
+  try {
+    await db.update(guests).set({ email: normalized }).where(eq(guests.id, guest.id));
+  } catch {
+    return { ok: false, error: taken };
+  }
   revalidatePath("/", "layout");
   return { ok: true };
 }

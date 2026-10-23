@@ -12,14 +12,6 @@ export function normalizeEmail(email: string): string | null {
   return trimmed.length <= 254 && EMAIL_RE.test(trimmed) ? trimmed : null;
 }
 
-// "yeizer@gmail.com" → "y•••r@gmail.com" — para confirmar a dónde se mandó el
-// link sin mostrar el correo completo a quien solo conoce el código.
-export function maskEmail(email: string) {
-  const [user, domain] = email.split("@");
-  const masked = user.length <= 2 ? `${user[0]}•••` : `${user[0]}•••${user[user.length - 1]}`;
-  return `${masked}@${domain}`;
-}
-
 export function appUrl() {
   const url = process.env.APP_URL;
   if (!url) throw new Error("Falta APP_URL en las variables de entorno.");
