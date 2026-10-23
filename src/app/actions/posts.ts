@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { posts, photos, reactions } from "@/db/schema";
-import { requireGuest } from "@/lib/session";
+import { requireOpenGuest } from "@/lib/session";
 import {
   deletePhotoObjects,
   isAllowedOriginalExt,
@@ -33,7 +33,7 @@ export type UploadRequest = { base?: string; originalType: string };
 // re-firma una foto ya empezada (reintento tras corte de red) en vez de
 // crear una nueva — así no se re-sube lo que ya llegó.
 export async function signUploads(category: UploadCategory, requests: UploadRequest[]) {
-  const guest = await requireGuest();
+  const guest = await requireOpenGuest();
   if (requests.length === 0 || requests.length > MAX_PHOTOS_PER_POST) {
     throw new Error("Cantidad de fotos inválida.");
   }
@@ -55,7 +55,7 @@ export async function createPost(
   uploaded: { base: string; originalExt: string }[],
   caption?: string
 ) {
-  const guest = await requireGuest();
+  const guest = await requireOpenGuest();
   if (uploaded.length === 0) throw new Error("No hay fotos para publicar.");
   if (uploaded.length > MAX_PHOTOS_PER_POST) throw new Error("Demasiadas fotos en una publicación.");
   // Los bases los genera signUploads — validar que sean de este invitado y
@@ -93,7 +93,7 @@ export async function createPost(
 }
 
 export async function updateCaption(postId: number, caption: string) {
-  const guest = await requireGuest();
+  const guest = await requireOpenGuest();
   const db = getDb();
 
   const [row] = await db
@@ -111,7 +111,7 @@ export async function updateCaption(postId: number, caption: string) {
 }
 
 export async function deleteOwnPhoto(photoId: number) {
-  const guest = await requireGuest();
+  const guest = await requireOpenGuest();
   const db = getDb();
 
   const [row] = await db
@@ -145,7 +145,7 @@ export async function deleteOwnPhoto(photoId: number) {
 // Borra la publicación entera (todas las fotos del carrusel) — usado desde
 // el grid del perfil, donde cada tile representa una publicación.
 export async function deleteOwnPost(postId: number) {
-  const guest = await requireGuest();
+  const guest = await requireOpenGuest();
   const db = getDb();
 
   const [post] = await db
@@ -169,7 +169,7 @@ export async function deleteOwnPost(postId: number) {
 }
 
 export async function toggleReaction(photoId: number, type: "love" | "fun" | "like") {
-  const guest = await requireGuest();
+  const guest = await requireOpenGuest();
   const db = getDb();
 
   const [existing] = await db
