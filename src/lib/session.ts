@@ -11,6 +11,7 @@ import {
 import { getDb } from "@/db";
 import { guests } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { isOpenFor } from "@/lib/opening";
 
 // Solo desde server actions (setear cookies no está permitido al renderizar).
 export async function startGuestSession(guestId: number) {
@@ -41,6 +42,16 @@ export async function getCurrentGuest() {
 export async function requireGuest() {
   const guest = await getCurrentGuest();
   if (!guest) redirect("/login");
+  return guest;
+}
+
+// Para server actions interactivas (subir, reaccionar, editar, borrar):
+// además de sesión, Momentos tiene que estar abierto (ver lib/opening.ts).
+// La UI ya muestra el conteo antes de la fecha — esto frena llamadas
+// directas a la action.
+export async function requireOpenGuest() {
+  const guest = await requireGuest();
+  if (!isOpenFor(guest.email)) throw new Error("Momentos todavía no está abierto.");
   return guest;
 }
 

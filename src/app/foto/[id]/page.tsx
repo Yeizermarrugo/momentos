@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
-import { getGuestId } from "@/lib/session";
+import { getCurrentGuest, getGuestId } from "@/lib/session";
+import { isOpenFor } from "@/lib/opening";
 import { getFeedPosts, getGuestProfile, flattenFeedPhotos, initials, type PhotoDetail } from "@/lib/queries";
 import { PhotoScroller } from "@/components/guest/photo-scroller";
 
@@ -23,6 +24,9 @@ export default async function FotoPage({
     const qs = new URLSearchParams(sp as Record<string, string>).toString();
     redirect(`/login?next=${encodeURIComponent(`/foto/${photoId}${qs ? `?${qs}` : ""}`)}`);
   }
+
+  // Antes de la apertura no hay álbum — "/" muestra el conteo.
+  if (!isOpenFor((await getCurrentGuest())?.email)) redirect("/");
 
   let list: PhotoDetail[];
 

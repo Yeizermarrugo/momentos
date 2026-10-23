@@ -32,7 +32,7 @@ App de fotos para la boda de Yeizer & Diana (10 dic 2026) — "Momentos". Invita
 
 ## Variables de entorno
 
-`DATABASE_URL`, `SESSION_SECRET`, `ADMIN_PASSWORD`, `AWS_MEDIA_BUCKET_NAME`, `AWS_MEDIA_REGION`, `AWS_MEDIA_ACCESS_KEY_ID`, `AWS_MEDIA_SECRET_ACCESS_KEY`, `RESEND_API_KEY`, `EMAIL_FROM` (`"Nombre <x@dominio-verificado>"`, con comillas), `APP_URL` (dominio real en prod — arma links de correo). Todas van también a Vercel prod.
+`DATABASE_URL`, `SESSION_SECRET`, `ADMIN_PASSWORD`, `AWS_MEDIA_BUCKET_NAME`, `AWS_MEDIA_REGION`, `AWS_MEDIA_ACCESS_KEY_ID`, `AWS_MEDIA_SECRET_ACCESS_KEY`, `RESEND_API_KEY`, `EMAIL_FROM` (`"Nombre <x@dominio-verificado>"`, con comillas), `APP_URL` (dominio real en prod — arma links de correo). Opcional: `MOMENTOS_OPENS_AT` (ISO 8601, pisa la fecha de apertura — ver `src/lib/opening.ts`; poner una fecha pasada en `.env.local` para probar la app antes del día). `EARLY_ACCESS_EMAILS` (correos separados por coma con acceso antes de la apertura — los novios, para pruebas). Todas van también a Vercel prod.
 
 ## Comandos
 
@@ -82,6 +82,8 @@ App de fotos para la boda de Yeizer & Diana (10 dic 2026) — "Momentos". Invita
 **Celebración de ganador** (`components/guest/winner-celebration.tsx`): al entrar el invitado, si una foto suya fue marcada ganadora, modal con confeti (`canvas-confetti`) + trofeo + thumbnail. Se muestra una vez por `photoId:markedAt` (no solo `photoId`) guardado en `localStorage` del navegador del invitado — la key compuesta con `markedAt` hace que si el admin desmarca y vuelve a marcar la misma foto ganadora, el modal se vea de nuevo solo (sin sincronizar ningún borrado activo entre admin e invitado, que son sesiones/dispositivos distintos).
 
 **Subida con original (estilo Instagram)**: `/subir` prepara en el navegador display JPEG 2048px q0.85 + miniatura JPEG 640px (JPEG, no WebP: Safari/iOS no codifica WebP en canvas → caía a PNG y la librería achicaba la foto). Al publicar se encola y el invitado sigue navegando; barra arriba con % real (bytes de las 3 versiones), aviso de no cerrar/bloquear. El post se crea (`createPost`) **recién cuando el original llegó a S3** — nunca hay post sin original. Error → botón reintentar (re-firma con los mismos bases, no re-sube lo ya subido). iPhone: `accept="image/*"` hace que iOS entregue JPEG a resolución completa (no HEIC) — compatible con redes/Windows; HEIC igual se acepta si llega. Admin descarga el original vía URL firmada con `Content-Disposition: attachment` (`getPhotoDownloadUrl`). Grids (perfil, admin, ranking) usan `thumbUrl` (fallback a `url` en fotos previas). Migración `0005` (`thumb_key`, `thumb_url`, `original_key` nullable).
+
+**Apertura el día de la boda** (`src/lib/opening.ts`, default `2026-12-10T00:00:00-05:00`, hora Colombia): antes de esa hora se puede crear cuenta / iniciar sesión, pero el layout `(guest)` muestra solo `Countdown` (días/horas/min/seg, al llegar a 0 hace `router.refresh()`), `/foto/[id]` redirige a `/`, y las server actions de `posts.ts` usan `requireOpenGuest()` (tira error si no abrió — frena llamadas directas). Admin no se ve afectado. Excepción: correos en `EARLY_ACCESS_EMAILS` (`isOpenFor(email)`) ven la app completa antes.
 
 **Pendiente**:
 - Cargar `RESEND_API_KEY`, `EMAIL_FROM` y `APP_URL` (dev en `.env.local`, prod en Vercel) y probar el correo de recuperación real.
